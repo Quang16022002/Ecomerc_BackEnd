@@ -1,201 +1,189 @@
 const Product = require("../models/ProductModel");
+const createProduct = async (newProduct) => {
+  try {
+    const { name, images, type, price, totalQuantity, rating, description, original_price, variants } = newProduct;
 
-const createProduct = (newProduct) => {
-  return new Promise(async (resolve, reject) => {
-    const { name, image, type, price, countInStock, rating, description, original_price } = newProduct;
-
-    try {
-      const checkProduct = await Product.findOne({ name: name });
-
-      if (checkProduct !== null) {
-        resolve({
-          status: "ERR",
-          message: "The name of product already exists",
-        });
-      }
-
-      const createdProduct = await Product.create({
-        name,
-        image,
-        type,
-        price,
-        countInStock,
-        rating,
-        description,
-        original_price,
-      });
-
-      if (createdProduct) {
-        // Lấy danh sách sản phẩm hiện tại từ database (hoặc một nguồn dữ liệu khác)
-        const productList = await Product.find();
-
-        // Đưa sản phẩm mới được tạo vào đầu danh sách
-        productList.unshift(createdProduct);
-
-        resolve({
-          status: "OK",
-          message: "SUCCESS",
-          data: productList,
-        });
-      } else {
-        resolve({
-          status: "ERR",
-          message: "Failed to create product",
-        });
-      }
-    } catch (error) {
-      reject(error);
-    }
-  });
-};
-
-const updateProduct = (id, data) => {
-  
-  return new Promise(async (resolve, reject) => {
-    try {
-      const checkProduct = await Product.findOne({
-        _id: id,
-      });
-      if (checkProduct === null) {
-        resolve({
-          status: "ERR",
-          message: "The product is not defined",
-        });
-      }
-
-      const updatedProduct = await Product.findByIdAndUpdate(id, data, {
-        new: true,
-      });
-      resolve({
-        status: "OK",
-        message: "SUCCESS",
-        data: updatedProduct,
-      });
-    } catch (e) {
-      reject(e);
-    }
-  });
-};
-
-const deleteProduct = (id) => {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const checkProduct = await Product.findOne({ _id: id });
-
-      if (checkProduct === null) {
-        resolve({
-          status: "ERR",
-          message: "the product is not defined",
-        });
-      }
-      await Product.findByIdAndDelete(id);
-
-      resolve({
-        status: "OK",
-        message: "Delete Product SUCCESS ",
-      });
-    } catch (e) {
-      reject(e);
-    }
-  });
-};
-
-const getAllProduct = (limit, page, sort, filter) => {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const query = {};
-      if (filter) {
-        const label = filter[0];
-        query[label] = { '$regex': filter[1], '$options': 'i' };
-      }
-
-      let productsQuery = Product.find(query).limit(limit).skip(limit * page);
-
-      // Nếu có sắp xếp thì áp dụng sắp xếp, nếu không thì sắp xếp theo createdAt giảm dần
-      if (sort) {
-        const objectSort = {};
-        objectSort[sort[1]] = sort[0];
-        productsQuery = productsQuery.sort(objectSort);
-      } else {
-        productsQuery = productsQuery.sort({ createdAt: -1 }); // Sắp xếp theo createdAt giảm dần
-      }
-
-      const allProduct = await productsQuery;
-      const totalProduct = await Product.countDocuments(query);
-
-      resolve({
-        status: "OK",
-        message: "List product",
-        data: allProduct,
-        total: totalProduct,
-        pageCurrent: Number(page + 1),
-        totalPage: Math.ceil(totalProduct / limit),
-      });
-    } catch (e) {
-      reject({
+    // Check if product with the same name already exists
+    const checkProduct = await Product.findOne({ name });
+    if (checkProduct) {
+      return {
         status: "ERR",
-        message: e.message
-      });
+        message: "The name of product already exists",
+      };
     }
-  });
+
+    // Calculate total countInStock from variants
+    const totalCountInStock = variants.reduce((total, variant) => total + variant.countInStock, 0);
+
+    const createdProduct = await Product.create({
+      name,
+      images,
+      type,
+      price,
+      totalQuantity: totalCountInStock,
+      rating,
+      description,
+      original_price,
+      variants,
+    });
+
+    if (!createdProduct) {
+      return {
+        status: "ERR",
+        message: "Failed to create product",
+      };
+    }
+
+    // Update images field in the main product with variant images
+    const variantImages = variants.map(variant => variant.image).filter(image => image);
+    createdProduct.images.push(...variantImages); // Assuming images is an array in ProductModel
+
+    // Save the updated product with variant images added to images field
+    await createdProduct.save();
+
+    const productList = await Product.find();
+    productList.unshift(createdProduct);
+
+    return {
+      status: "OK",
+      message: "SUCCESS",
+      data: productList,
+    };
+  } catch (error) {
+    throw error;
+  }
 };
 
-// const getAllProduct = () => {
-//   return new Promise(async (resolve, reject) => {
-//     try {
-//       const allProduct = await Product.find({
-   
-//       });
-//       resolve({
-//         status: "OK",
-//         message: "SUCCESS",
-//         data: allProduct,
-//       });
-//     } catch (e) {
-//       reject(e);
-//     }
-//   });
-// };
-const getDetailsProduct = (id) => {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const product = await Product.findOne({ _id: id });
-      if (product === null) {
-        resolve({
-          status: "ERR",
-          message: "the product is not defined",
-        });
-      }
-      resolve({
-        status: "OK",
-        message: "SUCCESS",
-        data: product,
-      });
-    } catch (e) {
-      reject(e);
+const updateProduct = async (id, data) => {
+  try {
+    const { variants } = data;
+
+    // Calculate total countInStock from variants
+    const totalCountInStock = variants.reduce((total, variant) => total + variant.countInStock, 0);
+
+    const updatedProduct = await Product.findByIdAndUpdate(id, { ...data, countInStock: totalCountInStock }, {
+      new: true,
+    });
+
+    if (!updatedProduct) {
+      return {
+        status: "ERR",
+        message: "Failed to update product",
+      };
     }
-  });
+
+    // Update images field in the main product with variant images
+    const variantImages = variants.map(variant => variant.image).filter(image => image);
+    updatedProduct.images = variantImages; // Assuming images is an array in ProductModel
+
+    // Save the updated product with variant images added to images field
+    await updatedProduct.save();
+
+    return {
+      status: "OK",
+      message: "SUCCESS",
+      data: updatedProduct,
+    };
+  } catch (error) {
+    throw error;
+  }
 };
 
-const getAllType = (limit, page, sort,filter) => {
-
-  return new Promise(async (resolve, reject) => {
-    try {
-   
-      const allType = await Product.distinct('type')
-        
-      resolve({
-        status: "OK",
-        message: "List type",
-        data: allType,
-     
-      });
-    } catch (e) {
-      reject(e);
+const deleteProduct = async (id) => {
+  try {
+    const checkProduct = await Product.findById(id);
+    if (!checkProduct) {
+      return {
+        status: "ERR",
+        message: "Product not found",
+      };
     }
-  });
+
+    await Product.findByIdAndDelete(id);
+
+    return {
+      status: "OK",
+      message: "Product deleted successfully",
+    };
+  } catch (error) {
+    console.error("Error deleting product:", error);
+    throw error; // Propagate the error to the caller
+  }
 };
 
+const getAllProduct = async (limit, page, sort, filter) => {
+  try {
+    const query = {};
+    if (filter) {
+      const [label, value] = filter;
+      query[label] = { $regex: value, $options: "i" };
+    }
+
+    let productsQuery = Product.find(query).limit(limit).skip(limit * page);
+
+    if (sort) {
+      const [sortOrder, sortBy] = sort;
+      const sortOptions = {};
+      sortOptions[sortBy] = sortOrder;
+      productsQuery = productsQuery.sort(sortOptions);
+    } else {
+      productsQuery = productsQuery.sort({ createdAt: -1 });
+    }
+
+    const [allProduct, totalProduct] = await Promise.all([
+      productsQuery,
+      Product.countDocuments(query),
+    ]);
+
+    return {
+      status: "OK",
+      message: "List of products",
+      data: allProduct,
+      total: totalProduct,
+      pageCurrent: Number(page + 1),
+      totalPage: Math.ceil(totalProduct / limit),
+    };
+  } catch (error) {
+    console.error("Error fetching all products:", error);
+    throw error; // Propagate the error to the caller
+  }
+};
+
+const getDetailsProduct = async (id) => {
+  try {
+    const product = await Product.findById(id);
+    if (!product) {
+      return {
+        status: "ERR",
+        message: "Product not found",
+      };
+    }
+
+    return {
+      status: "OK",
+      message: "Product details found",
+      data: product,
+    };
+  } catch (error) {
+    console.error("Error fetching product details:", error);
+    throw error; // Propagate the error to the caller
+  }
+};
+
+const getAllType = async () => {
+  try {
+    const allTypes = await Product.distinct("type");
+
+    return {
+      status: "OK",
+      message: "List of product types",
+      data: allTypes,
+    };
+  } catch (error) {
+    console.error("Error fetching all product types:", error);
+    throw error; // Propagate the error to the caller
+  }
+};
 
 module.exports = {
   createProduct,
@@ -203,5 +191,5 @@ module.exports = {
   deleteProduct,
   getAllProduct,
   getDetailsProduct,
-  getAllType
+  getAllType,
 };
